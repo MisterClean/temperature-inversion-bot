@@ -31,6 +31,15 @@ class BotConfig:
     wyoming_src: str
     bsky_handle: str | None
     bsky_app_password: str | None
+    hard_max_posts_per_day: int = 2
+    min_post_interval_seconds: int = 3600
+    dedupe_post_window_seconds: int = 86400
+    open_meteo_cache_ttl_seconds: int = 900
+    wyoming_cache_ttl_seconds: int = 21600
+    upstream_min_request_interval_seconds: float = 1.0
+    upstream_max_requests_per_minute: int = 20
+    upstream_circuit_failure_threshold: int = 5
+    upstream_circuit_cooldown_seconds: int = 180
     primary_station_def: StationDefinition | None = None
     secondary_station_def: StationDefinition | None = None
 
@@ -59,6 +68,20 @@ def _parse_float(raw: str | None, default: float) -> float:
     if raw is None:
         return default
     return float(raw)
+
+
+def _parse_positive_int(raw: str | None, default: int, field_name: str) -> int:
+    value = _parse_int(raw, default)
+    if value <= 0:
+        raise ConfigError(f"{field_name} must be > 0")
+    return value
+
+
+def _parse_non_negative_float(raw: str | None, default: float, field_name: str) -> float:
+    value = _parse_float(raw, default)
+    if value < 0:
+        raise ConfigError(f"{field_name} must be >= 0")
+    return value
 
 
 def _parse_optional_float(raw: str | None, field_name: str) -> float | None:
@@ -208,6 +231,15 @@ def load_config(force_dry_run: bool | None = None) -> BotConfig:
         allow_unknown_without_coordinates=allow_unknown_station_ids,
     )
 
+    max_posts_per_day = _parse_positive_int(os.getenv("MAX_POSTS_PER_DAY"), default=2, field_name="MAX_POSTS_PER_DAY")
+    hard_max_posts_per_day = _parse_positive_int(
+        os.getenv("HARD_MAX_POSTS_PER_DAY"),
+        default=2,
+        field_name="HARD_MAX_POSTS_PER_DAY",
+    )
+    if hard_max_posts_per_day < max_posts_per_day:
+        raise ConfigError("HARD_MAX_POSTS_PER_DAY must be >= MAX_POSTS_PER_DAY")
+
     return BotConfig(
         timezone=timezone,
         profile_source_mode=profile_source_mode,
@@ -216,7 +248,7 @@ def load_config(force_dry_run: bool | None = None) -> BotConfig:
         post_time_morning=post_time_morning,
         post_time_afternoon=post_time_afternoon,
         dry_run=dry_run,
-        max_posts_per_day=_parse_int(os.getenv("MAX_POSTS_PER_DAY"), default=2),
+        max_posts_per_day=max_posts_per_day,
         afternoon_confidence_threshold=_parse_float(os.getenv("AFTERNOON_CONFIDENCE_THRESHOLD"), default=0.55),
         state_file=Path(os.getenv("STATE_FILE", "var/state.json")),
         open_meteo_url=os.getenv("OPEN_METEO_URL", "https://api.open-meteo.com/v1/gfs"),
@@ -225,6 +257,47 @@ def load_config(force_dry_run: bool | None = None) -> BotConfig:
         wyoming_src=os.getenv("WYOMING_SOURCE", "BUFR").strip() or "BUFR",
         bsky_handle=bsky_handle,
         bsky_app_password=bsky_password,
+        hard_max_posts_per_day=hard_max_posts_per_day,
+        min_post_interval_seconds=_parse_positive_int(
+            os.getenv("MIN_POST_INTERVAL_SECONDS"),
+            default=3600,
+            field_name="MIN_POST_INTERVAL_SECONDS",
+        ),
+        dedupe_post_window_seconds=_parse_positive_int(
+            os.getenv("DEDUPE_POST_WINDOW_SECONDS"),
+            default=86400,
+            field_name="DEDUPE_POST_WINDOW_SECONDS",
+        ),
+        open_meteo_cache_ttl_seconds=_parse_positive_int(
+            os.getenv("OPEN_METEO_CACHE_TTL_SECONDS"),
+            default=900,
+            field_name="OPEN_METEO_CACHE_TTL_SECONDS",
+        ),
+        wyoming_cache_ttl_seconds=_parse_positive_int(
+            os.getenv("WYOMING_CACHE_TTL_SECONDS"),
+            default=21600,
+            field_name="WYOMING_CACHE_TTL_SECONDS",
+        ),
+        upstream_min_request_interval_seconds=_parse_non_negative_float(
+            os.getenv("UPSTREAM_MIN_REQUEST_INTERVAL_SECONDS"),
+            default=1.0,
+            field_name="UPSTREAM_MIN_REQUEST_INTERVAL_SECONDS",
+        ),
+        upstream_max_requests_per_minute=_parse_positive_int(
+            os.getenv("UPSTREAM_MAX_REQUESTS_PER_MINUTE"),
+            default=20,
+            field_name="UPSTREAM_MAX_REQUESTS_PER_MINUTE",
+        ),
+        upstream_circuit_failure_threshold=_parse_positive_int(
+            os.getenv("UPSTREAM_CIRCUIT_FAILURE_THRESHOLD"),
+            default=5,
+            field_name="UPSTREAM_CIRCUIT_FAILURE_THRESHOLD",
+        ),
+        upstream_circuit_cooldown_seconds=_parse_positive_int(
+            os.getenv("UPSTREAM_CIRCUIT_COOLDOWN_SECONDS"),
+            default=180,
+            field_name="UPSTREAM_CIRCUIT_COOLDOWN_SECONDS",
+        ),
         primary_station_def=primary_station_def,
         secondary_station_def=secondary_station_def,
     )

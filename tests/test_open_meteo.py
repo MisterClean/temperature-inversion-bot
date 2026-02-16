@@ -70,3 +70,40 @@ def test_fetch_station_profile_raises_for_missing_hourly(monkeypatch: pytest.Mon
     source = OpenMeteoProfileSource(base_url="https://example.test", model="hrrr_conus")
     with pytest.raises(DataFetchError):
         source.fetch_station_profile(STATIONS["KORD"], datetime(2026, 2, 16, 13, 0, tzinfo=UTC))
+
+
+def test_fetch_station_profile_uses_cache_to_reduce_upstream_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "elevation": 204,
+        "hourly": {
+            "time": ["2026-02-16T12:00", "2026-02-16T13:00"],
+            "temperature_2m": [-2.5, -2.0],
+            "wind_speed_10m": [8.0, 7.0],
+            "wind_direction_10m": [100, 90],
+            "temperature_1000hPa": [-1.7, -1.1],
+            "temperature_975hPa": [-1.0, -0.4],
+            "temperature_950hPa": [-0.5, 0.0],
+            "temperature_925hPa": [0.2, 0.8],
+            "temperature_900hPa": [0.1, 0.3],
+            "temperature_850hPa": [-1.2, -1.0],
+            "geopotential_height_1000hPa": [240, 240],
+            "geopotential_height_975hPa": [330, 330],
+            "geopotential_height_950hPa": [520, 520],
+            "geopotential_height_925hPa": [780, 780],
+            "geopotential_height_900hPa": [1030, 1030],
+            "geopotential_height_850hPa": [1500, 1500],
+        },
+    }
+    calls = {"count": 0}
+
+    def fake_get(url, params, timeout):  # noqa: ANN001
+        calls["count"] += 1
+        return FakeResponse(payload)
+
+    monkeypatch.setattr("temp_inversion_bot.data_sources.open_meteo.httpx.get", fake_get)
+
+    source = OpenMeteoProfileSource(base_url="https://example.test", model=None, cache_ttl_s=9999)
+    source.fetch_station_profile(STATIONS["KORD"], datetime(2026, 2, 16, 13, 0, tzinfo=UTC))
+    source.fetch_station_profile(STATIONS["KORD"], datetime(2026, 2, 16, 13, 10, tzinfo=UTC))
+
+    assert calls["count"] == 1

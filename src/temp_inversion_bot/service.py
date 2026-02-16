@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, timedelta
 
 from temp_inversion_bot.analysis import analyze_station_profile, combine_station_analyses
 from temp_inversion_bot.composer import compose_post
@@ -50,6 +50,10 @@ class InversionBotService:
         now_local = now_utc.astimezone(self._config.tzinfo)
         local_day = now_local.date()
 
+        # Hard guardrail: never exceed this daily cap, even with --force.
+        if self._state_store.post_count(local_day) >= self._config.hard_max_posts_per_day:
+            return RunOutcome(slot=slot, posted=False, reason="hard_daily_post_cap_reached")
+
         if not force and self._state_store.post_count(local_day) >= self._config.max_posts_per_day:
             return RunOutcome(slot=slot, posted=False, reason="max_posts_reached")
 
@@ -72,6 +76,35 @@ class InversionBotService:
                 return RunOutcome(slot=slot, posted=False, reason="afternoon_status_unchanged", analysis=analysis)
 
         post_text = compose_post(analysis)
+        latest_post = self._state_store.latest_post()
+        if latest_post is not None:
+            latest_timestamp_raw = latest_post.get("timestamp_utc")
+            if latest_timestamp_raw:
+                try:
+                    latest_timestamp = datetime.fromisoformat(latest_timestamp_raw).astimezone(UTC)
+                except ValueError:
+                    latest_timestamp = None
+                if latest_timestamp is not None:
+                    min_interval = timedelta(seconds=self._config.min_post_interval_seconds)
+                    if now_utc - latest_timestamp < min_interval:
+                        return RunOutcome(
+                            slot=slot,
+                            posted=False,
+                            reason="min_post_interval_not_elapsed",
+                            post_text=post_text,
+                            analysis=analysis,
+                        )
+
+        dedupe_since = now_utc - timedelta(seconds=self._config.dedupe_post_window_seconds)
+        if self._state_store.has_post_with_text_since(post_text, dedupe_since):
+            return RunOutcome(
+                slot=slot,
+                posted=False,
+                reason="duplicate_post_suppressed",
+                post_text=post_text,
+                analysis=analysis,
+            )
+
         try:
             post_uri = self._publisher.publish(post_text)
         except RetryError as exc:

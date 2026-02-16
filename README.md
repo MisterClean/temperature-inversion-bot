@@ -78,10 +78,20 @@ Optional key settings:
 - `SECONDARY_LATITUDE`, `SECONDARY_LONGITUDE`, `SECONDARY_ELEVATION_M` (optional override)
 - `POST_TIME_MORNING` (default `07:30`)
 - `POST_TIME_AFTERNOON` (default `15:30`)
+- `MAX_POSTS_PER_DAY` (soft cap for normal scheduled flow)
+- `HARD_MAX_POSTS_PER_DAY` (hard cap applied even with `--force`)
+- `MIN_POST_INTERVAL_SECONDS` (minimum time between posts)
+- `DEDUPE_POST_WINDOW_SECONDS` (suppresses identical reposts in this window)
 - `WYOMING_SOUNDING_URL` (default `https://weather.uwyo.edu/wsgi/sounding`)
 - `WYOMING_SOURCE` (default `BUFR`)
+- `WYOMING_CACHE_TTL_SECONDS` (default `21600`)
 - `OPEN_METEO_URL` (default `https://api.open-meteo.com/v1/gfs`)
 - `OPEN_METEO_MODEL` (optional; leave empty for GFS endpoint default)
+- `OPEN_METEO_CACHE_TTL_SECONDS` (default `900`)
+- `UPSTREAM_MIN_REQUEST_INTERVAL_SECONDS` (default `1.0`)
+- `UPSTREAM_MAX_REQUESTS_PER_MINUTE` (default `20`)
+- `UPSTREAM_CIRCUIT_FAILURE_THRESHOLD` (default `5`)
+- `UPSTREAM_CIRCUIT_COOLDOWN_SECONDS` (default `180`)
 - `DRY_RUN` (`true`/`false`)
 
 ### 3. Run once (safe)
@@ -155,5 +165,12 @@ MIT. See `LICENSE`.
 
 - `actual` mode pulls observed soundings from Wyoming (`TEXT:CSV`) at 00Z/12Z cycles, with fallback to earlier cycles.
 - `forecast` mode uses Open-Meteo GFS pressure-level temperatures/geopotential heights.
+- Both data sources include request throttling, per-minute request caps, retry backoff, circuit breaker cooldowns, and in-memory response caching.
 - Confidence is reduced when low-level data is sparse or pressure-level conversion is used.
 - Built-in station IDs include `74560` (Lincoln, IL), `KORD`, `KMDW`, and `KGYY`.
+
+## Anti-Spam Safeguards
+
+- Hard daily post cap is enforced even with `--force`.
+- Minimum interval between posts prevents rapid accidental repeats.
+- Duplicate post suppression blocks reposting identical text within a configurable window.

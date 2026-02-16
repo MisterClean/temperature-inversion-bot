@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -67,8 +68,8 @@ class FailingPublisher:
         raise RetryError("publish failed")
 
 
-def _config(state_file: Path) -> BotConfig:
-    return BotConfig(
+def _config(state_file: Path, **overrides) -> BotConfig:  # noqa: ANN003
+    config = BotConfig(
         timezone="America/Chicago",
         profile_source_mode="forecast",
         primary_station="KORD",
@@ -86,6 +87,7 @@ def _config(state_file: Path) -> BotConfig:
         bsky_handle=None,
         bsky_app_password=None,
     )
+    return replace(config, **overrides)
 
 
 def test_run_slot_posts_once_and_skips_duplicate_morning(tmp_path: Path) -> None:
@@ -161,3 +163,60 @@ def test_publish_failure_does_not_write_state(tmp_path: Path) -> None:
     assert outcome.posted is False
     assert outcome.reason == "publish_failed"
     assert JsonStateStore(state_file).post_count(datetime(2026, 2, 16, tzinfo=UTC).date()) == 0
+
+
+def test_hard_daily_cap_applies_even_when_force_is_true(tmp_path: Path) -> None:
+    state_file = tmp_path / "state.json"
+    service = InversionBotService(
+        config=_config(state_file, max_posts_per_day=10, hard_max_posts_per_day=1),
+        source=StubSource(),
+        publisher=StubPublisher(),
+        state_store=JsonStateStore(state_file),
+    )
+
+    first = service.run_slot("manual", now=datetime(2026, 2, 16, 13, 30, tzinfo=UTC), force=True)
+    second = service.run_slot("manual", now=datetime(2026, 2, 16, 14, 30, tzinfo=UTC), force=True)
+
+    assert first.posted is True
+    assert second.posted is False
+    assert second.reason == "hard_daily_post_cap_reached"
+
+
+def test_min_post_interval_blocks_back_to_back_posts(tmp_path: Path) -> None:
+    state_file = tmp_path / "state.json"
+    service = InversionBotService(
+        config=_config(state_file, max_posts_per_day=10, hard_max_posts_per_day=10, min_post_interval_seconds=7200),
+        source=StubSource(),
+        publisher=StubPublisher(),
+        state_store=JsonStateStore(state_file),
+    )
+
+    first = service.run_slot("manual", now=datetime(2026, 2, 16, 13, 30, tzinfo=UTC), force=True)
+    second = service.run_slot("manual", now=datetime(2026, 2, 16, 14, 0, tzinfo=UTC), force=True)
+
+    assert first.posted is True
+    assert second.posted is False
+    assert second.reason == "min_post_interval_not_elapsed"
+
+
+def test_duplicate_post_text_is_suppressed(tmp_path: Path) -> None:
+    state_file = tmp_path / "state.json"
+    service = InversionBotService(
+        config=_config(
+            state_file,
+            max_posts_per_day=10,
+            hard_max_posts_per_day=10,
+            min_post_interval_seconds=1,
+            dedupe_post_window_seconds=86400,
+        ),
+        source=StubSource(),
+        publisher=StubPublisher(),
+        state_store=JsonStateStore(state_file),
+    )
+
+    first = service.run_slot("manual", now=datetime(2026, 2, 16, 13, 30, tzinfo=UTC), force=True)
+    second = service.run_slot("manual", now=datetime(2026, 2, 16, 16, 0, tzinfo=UTC), force=True)
+
+    assert first.posted is True
+    assert second.posted is False
+    assert second.reason == "duplicate_post_suppressed"

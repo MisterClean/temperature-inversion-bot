@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime
 
 import httpx
 
 from temp_inversion_bot.data_sources.base import DataFetchError
+from temp_inversion_bot.data_sources.guard import RequestSafetyGuard
 from temp_inversion_bot.domain import StationProfile, VerticalPoint
 from temp_inversion_bot.retry import RetryError, retry_call
 from temp_inversion_bot.stations import StationDefinition
@@ -29,6 +31,11 @@ class OpenMeteoProfileSource:
         model: str | None,
         timeout_s: float = 15.0,
         attempts: int = 3,
+        cache_ttl_s: int = 900,
+        min_request_interval_s: float = 1.0,
+        max_requests_per_minute: int = 20,
+        circuit_failure_threshold: int = 5,
+        circuit_cooldown_s: int = 180,
         logger: logging.Logger | None = None,
     ) -> None:
         self._base_url = base_url
@@ -36,10 +43,25 @@ class OpenMeteoProfileSource:
         self._timeout_s = timeout_s
         self._attempts = attempts
         self._logger = logger or logging.getLogger(__name__)
+        self._cache_ttl_s = max(0, int(cache_ttl_s))
+        self._payload_cache: dict[str, tuple[float, dict]] = {}
+        self._guard = RequestSafetyGuard(
+            source_name="open-meteo",
+            min_request_interval_s=min_request_interval_s,
+            max_requests_per_minute=max_requests_per_minute,
+            circuit_failure_threshold=circuit_failure_threshold,
+            circuit_cooldown_s=circuit_cooldown_s,
+            logger=self._logger,
+        )
 
     def fetch_station_profile(self, station: StationDefinition, target_time_utc: datetime) -> StationProfile:
         if target_time_utc.tzinfo is None:
             raise ValueError("target_time_utc must be timezone-aware")
+
+        cache_key = self._cache_key(station)
+        cached_payload = self._cache_get(cache_key)
+        if cached_payload is not None:
+            return self._payload_to_profile(cached_payload, station, target_time_utc)
 
         try:
             payload = retry_call(
@@ -51,9 +73,11 @@ class OpenMeteoProfileSource:
             )
         except RetryError as exc:
             raise DataFetchError(f"Open-Meteo fetch failed for {station.station_id}") from exc
+        self._cache_set(cache_key, payload)
         return self._payload_to_profile(payload, station, target_time_utc)
 
     def _request_payload(self, station: StationDefinition) -> dict:
+        self._guard.before_request()
         hourly_fields = [
             "temperature_2m",
             "wind_speed_10m",
@@ -75,13 +99,20 @@ class OpenMeteoProfileSource:
         if self._model:
             params["models"] = self._model
 
-        response = httpx.get(self._base_url, params=params, timeout=self._timeout_s)
-        response.raise_for_status()
-        data = response.json()
+        try:
+            response = httpx.get(self._base_url, params=params, timeout=self._timeout_s)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            self._guard.record_failure(exc)
+            raise
 
         if "hourly" not in data or "time" not in data["hourly"]:
-            raise DataFetchError("Open-Meteo response missing hourly time data")
+            err = DataFetchError("Open-Meteo response missing hourly time data")
+            self._guard.record_failure(err)
+            raise err
 
+        self._guard.record_success()
         return data
 
     def _payload_to_profile(
@@ -137,6 +168,30 @@ class OpenMeteoProfileSource:
             return self._model
         endpoint = self._base_url.rstrip("/").split("/")[-1].strip()
         return endpoint or "forecast"
+
+    def _cache_key(self, station: StationDefinition) -> str:
+        return (
+            f"{station.station_id}|{station.latitude:.4f}|{station.longitude:.4f}|"
+            f"{self._base_url}|{self._model or ''}"
+        )
+
+    def _cache_get(self, key: str) -> dict | None:
+        if self._cache_ttl_s <= 0:
+            return None
+        item = self._payload_cache.get(key)
+        if item is None:
+            return None
+
+        expires_at, payload = item
+        if time.monotonic() >= expires_at:
+            self._payload_cache.pop(key, None)
+            return None
+        return payload
+
+    def _cache_set(self, key: str, payload: dict) -> None:
+        if self._cache_ttl_s <= 0:
+            return
+        self._payload_cache[key] = (time.monotonic() + self._cache_ttl_s, payload)
 
 
 def _series_value(payload: dict, key: str, index: int) -> float | None:

@@ -31,8 +31,14 @@ def test_build_profile_source_actual_mode() -> None:
         primary_station="74560",
         wyoming_src="BUFR",
         wyoming_url="https://weather.uwyo.edu/wsgi/sounding",
+        wyoming_cache_ttl_seconds=21600,
+        upstream_min_request_interval_seconds=1.0,
+        upstream_max_requests_per_minute=20,
+        upstream_circuit_failure_threshold=5,
+        upstream_circuit_cooldown_seconds=180,
         open_meteo_model=None,
         open_meteo_url="https://api.open-meteo.com/v1/gfs",
+        open_meteo_cache_ttl_seconds=900,
     )
     source = _build_profile_source(cfg, logging.getLogger(__name__))
     assert isinstance(source, WyomingSoundingProfileSource)
@@ -44,8 +50,14 @@ def test_build_profile_source_forecast_mode() -> None:
         primary_station="KORD",
         wyoming_src="BUFR",
         wyoming_url="https://weather.uwyo.edu/wsgi/sounding",
+        wyoming_cache_ttl_seconds=21600,
+        upstream_min_request_interval_seconds=1.0,
+        upstream_max_requests_per_minute=20,
+        upstream_circuit_failure_threshold=5,
+        upstream_circuit_cooldown_seconds=180,
         open_meteo_model="hrrr_conus",
         open_meteo_url="https://api.open-meteo.com/v1/gfs",
+        open_meteo_cache_ttl_seconds=900,
     )
     source = _build_profile_source(cfg, logging.getLogger(__name__))
     assert isinstance(source, OpenMeteoProfileSource)

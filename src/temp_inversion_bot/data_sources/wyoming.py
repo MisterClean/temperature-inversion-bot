@@ -3,11 +3,13 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 
 import httpx
 
 from temp_inversion_bot.data_sources.base import DataFetchError
+from temp_inversion_bot.data_sources.guard import RequestSafetyGuard
 from temp_inversion_bot.domain import StationProfile, VerticalPoint
 from temp_inversion_bot.retry import RetryError, retry_call
 from temp_inversion_bot.stations import StationDefinition
@@ -25,6 +27,11 @@ class WyomingSoundingProfileSource:
         timeout_s: float = 20.0,
         attempts: int = 3,
         cycle_lookback_count: int = 4,
+        cache_ttl_s: int = 21600,
+        min_request_interval_s: float = 1.0,
+        max_requests_per_minute: int = 20,
+        circuit_failure_threshold: int = 5,
+        circuit_cooldown_s: int = 180,
         logger: logging.Logger | None = None,
     ) -> None:
         self._base_url = base_url
@@ -34,6 +41,16 @@ class WyomingSoundingProfileSource:
         self._attempts = attempts
         self._cycle_lookback_count = max(1, cycle_lookback_count)
         self._logger = logger or logging.getLogger(__name__)
+        self._cache_ttl_s = max(0, int(cache_ttl_s))
+        self._csv_cache: dict[tuple[str, str], tuple[float, str]] = {}
+        self._guard = RequestSafetyGuard(
+            source_name="wyoming",
+            min_request_interval_s=min_request_interval_s,
+            max_requests_per_minute=max_requests_per_minute,
+            circuit_failure_threshold=circuit_failure_threshold,
+            circuit_cooldown_s=circuit_cooldown_s,
+            logger=self._logger,
+        )
 
     def fetch_station_profile(self, station: StationDefinition, target_time_utc: datetime) -> StationProfile:
         if target_time_utc.tzinfo is None:
@@ -41,6 +58,10 @@ class WyomingSoundingProfileSource:
 
         errors: list[str] = []
         for cycle_time in _candidate_synoptic_cycles(target_time_utc.astimezone(UTC), self._cycle_lookback_count):
+            cache_key = (station.station_id, cycle_time.isoformat())
+            cached_csv = self._cache_get(cache_key)
+            if cached_csv is not None:
+                return self._csv_to_profile(cached_csv, station=station, cycle_time_utc=cycle_time)
             try:
                 csv_text = retry_call(
                     lambda: self._request_csv_text(station_id=station.station_id, cycle_time_utc=cycle_time),
@@ -49,6 +70,7 @@ class WyomingSoundingProfileSource:
                     logger=self._logger,
                     context=f"uwyo sounding fetch for {station.station_id} at {cycle_time.isoformat()}",
                 )
+                self._cache_set(cache_key, csv_text)
                 return self._csv_to_profile(csv_text, station=station, cycle_time_utc=cycle_time)
             except RetryError as exc:
                 errors.append(f"{cycle_time.isoformat()}: {exc}")
@@ -59,17 +81,25 @@ class WyomingSoundingProfileSource:
         )
 
     def _request_csv_text(self, *, station_id: str, cycle_time_utc: datetime) -> str:
+        self._guard.before_request()
         params = {
             "datetime": cycle_time_utc.strftime("%Y-%m-%d %H:%M:%S"),
             "id": station_id,
             "src": self._src,
             "type": self._sounding_type,
         }
-        response = httpx.get(self._base_url, params=params, timeout=self._timeout_s)
-        response.raise_for_status()
-        text = response.text
+        try:
+            response = httpx.get(self._base_url, params=params, timeout=self._timeout_s)
+            response.raise_for_status()
+            text = response.text
+        except Exception as exc:
+            self._guard.record_failure(exc)
+            raise
         if "pressure_hPa" not in text or "temperature_C" not in text:
-            raise DataFetchError("Wyoming response did not contain expected sounding CSV columns")
+            err = DataFetchError("Wyoming response did not contain expected sounding CSV columns")
+            self._guard.record_failure(err)
+            raise err
+        self._guard.record_success()
         return text
 
     def _csv_to_profile(
@@ -144,6 +174,24 @@ class WyomingSoundingProfileSource:
             surface_wind_kt=surface_wind_kt,
             surface_wind_dir_deg=surface_wind_dir_deg,
         )
+
+    def _cache_get(self, key: tuple[str, str]) -> str | None:
+        if self._cache_ttl_s <= 0:
+            return None
+        item = self._csv_cache.get(key)
+        if item is None:
+            return None
+
+        expires_at, csv_text = item
+        if time.monotonic() >= expires_at:
+            self._csv_cache.pop(key, None)
+            return None
+        return csv_text
+
+    def _cache_set(self, key: tuple[str, str], csv_text: str) -> None:
+        if self._cache_ttl_s <= 0:
+            return
+        self._csv_cache[key] = (time.monotonic() + self._cache_ttl_s, csv_text)
 
 
 def _candidate_synoptic_cycles(target_time_utc: datetime, count: int) -> list[datetime]:

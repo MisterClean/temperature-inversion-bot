@@ -80,3 +80,24 @@ def test_fetch_station_profile_raises_when_no_usable_csv(monkeypatch) -> None:  
     source = WyomingSoundingProfileSource(base_url="https://weather.uwyo.edu/wsgi/sounding", src="BUFR", attempts=1)
     with pytest.raises(DataFetchError):
         source.fetch_station_profile(STATIONS["74560"], datetime(2026, 2, 16, 13, 0, tzinfo=UTC))
+
+
+def test_fetch_station_profile_uses_cycle_cache(monkeypatch) -> None:  # noqa: ANN001
+    calls = {"count": 0}
+
+    def fake_get(url, params, timeout):  # noqa: ANN001
+        calls["count"] += 1
+        return FakeResponse(_sample_csv())
+
+    monkeypatch.setattr("temp_inversion_bot.data_sources.wyoming.httpx.get", fake_get)
+
+    source = WyomingSoundingProfileSource(
+        base_url="https://weather.uwyo.edu/wsgi/sounding",
+        src="BUFR",
+        attempts=1,
+        cache_ttl_s=9999,
+    )
+    source.fetch_station_profile(STATIONS["74560"], datetime(2026, 2, 16, 13, 0, tzinfo=UTC))
+    source.fetch_station_profile(STATIONS["74560"], datetime(2026, 2, 16, 13, 20, tzinfo=UTC))
+
+    assert calls["count"] == 1

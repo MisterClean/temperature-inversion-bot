@@ -29,12 +29,21 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "POST_TIME_MORNING",
         "POST_TIME_AFTERNOON",
         "MAX_POSTS_PER_DAY",
+        "HARD_MAX_POSTS_PER_DAY",
+        "MIN_POST_INTERVAL_SECONDS",
+        "DEDUPE_POST_WINDOW_SECONDS",
         "AFTERNOON_CONFIDENCE_THRESHOLD",
         "STATE_FILE",
         "OPEN_METEO_URL",
         "OPEN_METEO_MODEL",
+        "OPEN_METEO_CACHE_TTL_SECONDS",
         "WYOMING_SOUNDING_URL",
         "WYOMING_SOURCE",
+        "WYOMING_CACHE_TTL_SECONDS",
+        "UPSTREAM_MIN_REQUEST_INTERVAL_SECONDS",
+        "UPSTREAM_MAX_REQUESTS_PER_MINUTE",
+        "UPSTREAM_CIRCUIT_FAILURE_THRESHOLD",
+        "UPSTREAM_CIRCUIT_COOLDOWN_SECONDS",
         "DRY_RUN",
     ]
     for key in keys:
@@ -143,3 +152,13 @@ def test_unknown_station_without_coordinates_allowed_in_actual_mode(monkeypatch:
     assert cfg.primary_station == "72469"
     assert cfg.primary_station_def is not None
     assert cfg.primary_station_def.station_id == "72469"
+
+
+def test_rejects_hard_cap_below_soft_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setenv("MAX_POSTS_PER_DAY", "2")
+    monkeypatch.setenv("HARD_MAX_POSTS_PER_DAY", "1")
+
+    with pytest.raises(ConfigError):
+        load_config()

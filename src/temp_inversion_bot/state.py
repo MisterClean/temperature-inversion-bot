@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from temp_inversion_bot.domain import CombinedAnalysis
@@ -36,6 +36,37 @@ class JsonStateStore:
         state = self._read_state()
         day_state = state["days"].get(day.isoformat(), {})
         return day_state.get("morning")
+
+    def latest_post(self) -> dict | None:
+        state = self._read_state()
+        latest: tuple[datetime, dict] | None = None
+        for day_state in state["days"].values():
+            for post in day_state.get("posts", []):
+                timestamp_raw = post.get("timestamp_utc")
+                if not timestamp_raw:
+                    continue
+                parsed = _parse_timestamp(timestamp_raw)
+                if parsed is None:
+                    continue
+                if latest is None or parsed > latest[0]:
+                    latest = (parsed, post)
+
+        return latest[1] if latest is not None else None
+
+    def has_post_with_text_since(self, text: str, since_utc: datetime) -> bool:
+        state = self._read_state()
+        since = since_utc.astimezone(UTC)
+        for day_state in state["days"].values():
+            for post in day_state.get("posts", []):
+                if post.get("text") != text:
+                    continue
+                timestamp_raw = post.get("timestamp_utc")
+                if not timestamp_raw:
+                    continue
+                timestamp = _parse_timestamp(timestamp_raw)
+                if timestamp is not None and timestamp >= since:
+                    return True
+        return False
 
     def record_post(
         self,
@@ -81,3 +112,13 @@ class JsonStateStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.open("w", encoding="utf-8") as handle:
             json.dump(state, handle, indent=2, sort_keys=True)
+
+
+def _parse_timestamp(raw: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

@@ -54,6 +54,11 @@ def _build_profile_source(config, logger):  # noqa: ANN001
         return WyomingSoundingProfileSource(
             base_url=config.wyoming_url,
             src=config.wyoming_src,
+            cache_ttl_s=config.wyoming_cache_ttl_seconds,
+            min_request_interval_s=config.upstream_min_request_interval_seconds,
+            max_requests_per_minute=config.upstream_max_requests_per_minute,
+            circuit_failure_threshold=config.upstream_circuit_failure_threshold,
+            circuit_cooldown_s=config.upstream_circuit_cooldown_seconds,
             logger=logger,
         )
 
@@ -61,6 +66,11 @@ def _build_profile_source(config, logger):  # noqa: ANN001
     return OpenMeteoProfileSource(
         base_url=config.open_meteo_url,
         model=config.open_meteo_model,
+        cache_ttl_s=config.open_meteo_cache_ttl_seconds,
+        min_request_interval_s=config.upstream_min_request_interval_seconds,
+        max_requests_per_minute=config.upstream_max_requests_per_minute,
+        circuit_failure_threshold=config.upstream_circuit_failure_threshold,
+        circuit_cooldown_s=config.upstream_circuit_cooldown_seconds,
         logger=logger,
     )
 
