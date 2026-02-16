@@ -17,7 +17,7 @@ First adapter included: **Bluesky** via Python `atproto` (`0.0.65+`).
 ## Architecture
 
 - `src/temp_inversion_bot/data_sources/`
-  - `open_meteo.py`: fetches vertical profile + wind fields for KORD/KMDW.
+  - `open_meteo.py`: fetches vertical profile + wind fields for configurable locations.
 - `src/temp_inversion_bot/analysis.py`
   - interpolation, smoothing, inversion detection, confidence scoring.
 - `src/temp_inversion_bot/composer.py`
@@ -58,8 +58,10 @@ Required values:
 Optional key settings:
 
 - `TZ` (default `America/Chicago`)
-- `PRIMARY_STATION` (default `KORD`)
-- `SECONDARY_STATION` (default `KMDW`)
+- `PRIMARY_STATION` (default `KORD`, or custom label)
+- `SECONDARY_STATION` (default `KMDW`, empty to disable)
+- `PRIMARY_LATITUDE`, `PRIMARY_LONGITUDE`, `PRIMARY_ELEVATION_M` (optional override)
+- `SECONDARY_LATITUDE`, `SECONDARY_LONGITUDE`, `SECONDARY_ELEVATION_M` (optional override)
 - `POST_TIME_MORNING` (default `07:30`)
 - `POST_TIME_AFTERNOON` (default `15:30`)
 - `OPEN_METEO_URL` (default `https://api.open-meteo.com/v1/gfs`)
@@ -125,4 +127,4 @@ class MyServicePublisher:
 
 - Current implementation uses Open-Meteo GFS pressure-level temperatures/geopotential heights.
 - Confidence is reduced when low-level data is sparse or pressure-level conversion is used.
-- KORD is primary, KMDW cross-check can reduce confidence and trigger localized/lake-influenced status.
+- Built-in station IDs include `KORD`, `KMDW`, and `KGYY`, and you can override either station with custom coordinates.

@@ -19,6 +19,12 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TZ",
         "PRIMARY_STATION",
         "SECONDARY_STATION",
+        "PRIMARY_LATITUDE",
+        "PRIMARY_LONGITUDE",
+        "PRIMARY_ELEVATION_M",
+        "SECONDARY_LATITUDE",
+        "SECONDARY_LONGITUDE",
+        "SECONDARY_ELEVATION_M",
         "POST_TIME_MORNING",
         "POST_TIME_AFTERNOON",
         "MAX_POSTS_PER_DAY",
@@ -65,6 +71,8 @@ def test_load_config_normalizes_inputs(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert cfg.post_time_morning == "07:05"
     assert cfg.primary_station == "KORD"
     assert cfg.secondary_station == "KMDW"
+    assert cfg.primary_station_def is not None
+    assert cfg.secondary_station_def is not None
     assert os.fspath(cfg.state_file).endswith("state.json")
 
 
@@ -72,6 +80,35 @@ def test_invalid_time_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_env(monkeypatch)
     monkeypatch.setenv("DRY_RUN", "true")
     monkeypatch.setenv("POST_TIME_MORNING", "99:00")
+
+    with pytest.raises(ConfigError):
+        load_config()
+
+
+def test_load_config_supports_custom_primary_coordinates(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setenv("PRIMARY_STATION", "home")
+    monkeypatch.setenv("PRIMARY_LATITUDE", "42.123")
+    monkeypatch.setenv("PRIMARY_LONGITUDE", "-87.987")
+    monkeypatch.setenv("PRIMARY_ELEVATION_M", "250")
+    monkeypatch.setenv("SECONDARY_STATION", "")
+
+    cfg = load_config()
+
+    assert cfg.primary_station == "HOME"
+    assert cfg.primary_station_def is not None
+    assert cfg.primary_station_def.latitude == 42.123
+    assert cfg.primary_station_def.longitude == -87.987
+    assert cfg.primary_station_def.elevation_m == 250.0
+    assert cfg.secondary_station is None
+    assert cfg.secondary_station_def is None
+
+
+def test_unknown_station_without_coordinates_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setenv("PRIMARY_STATION", "UNKNOWN")
 
     with pytest.raises(ConfigError):
         load_config()

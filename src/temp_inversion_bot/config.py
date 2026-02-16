@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
+from temp_inversion_bot.stations import STATIONS, StationDefinition
+
 
 @dataclass(frozen=True, slots=True)
 class BotConfig:
@@ -23,6 +25,8 @@ class BotConfig:
     open_meteo_model: str | None
     bsky_handle: str | None
     bsky_app_password: str | None
+    primary_station_def: StationDefinition | None = None
+    secondary_station_def: StationDefinition | None = None
 
     @property
     def tzinfo(self) -> ZoneInfo:
@@ -51,6 +55,15 @@ def _parse_float(raw: str | None, default: float) -> float:
     return float(raw)
 
 
+def _parse_optional_float(raw: str | None, field_name: str) -> float | None:
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return float(raw)
+    except ValueError as exc:  # pragma: no cover - defensive
+        raise ConfigError(f"{field_name} must be numeric") from exc
+
+
 def _validate_hhmm(raw: str, field_name: str) -> str:
     pieces = raw.split(":")
     if len(pieces) != 2:
@@ -61,6 +74,50 @@ def _validate_hhmm(raw: str, field_name: str) -> str:
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
         raise ConfigError(f"{field_name} must be a valid 24-hour time")
     return f"{hour:02d}:{minute:02d}"
+
+
+def _resolve_station_definition(
+    *,
+    station_id: str | None,
+    latitude: float | None,
+    longitude: float | None,
+    elevation_m: float | None,
+    env_prefix: str,
+    required: bool,
+) -> StationDefinition | None:
+    has_any_coordinate_override = any(value is not None for value in (latitude, longitude, elevation_m))
+
+    if station_id is None:
+        if has_any_coordinate_override:
+            raise ConfigError(f"{env_prefix}_STATION is required when using coordinate overrides")
+        return None
+
+    if has_any_coordinate_override:
+        if latitude is None or longitude is None:
+            raise ConfigError(
+                f"{env_prefix}_LATITUDE and {env_prefix}_LONGITUDE must both be set when overriding station location"
+            )
+        return StationDefinition(
+            station_id=station_id,
+            latitude=latitude,
+            longitude=longitude,
+            elevation_m=elevation_m if elevation_m is not None else 0.0,
+        )
+
+    station = STATIONS.get(station_id)
+    if station is not None:
+        return station
+
+    if required:
+        raise ConfigError(
+            f"Unknown {env_prefix}_STATION '{station_id}'. "
+            f"Set {env_prefix}_LATITUDE and {env_prefix}_LONGITUDE for a custom location."
+        )
+
+    raise ConfigError(
+        f"Unknown {env_prefix}_STATION '{station_id}'. "
+        f"Set {env_prefix}_LATITUDE and {env_prefix}_LONGITUDE for a custom location."
+    )
 
 
 def load_config(force_dry_run: bool | None = None) -> BotConfig:
@@ -87,13 +144,46 @@ def load_config(force_dry_run: bool | None = None) -> BotConfig:
     if not dry_run and (not bsky_handle or not bsky_password):
         raise ConfigError("BSKY_HANDLE and BSKY_APP_PASSWORD are required when DRY_RUN=false")
 
-    secondary_station = os.getenv("SECONDARY_STATION", "KMDW").strip().upper()
-    if not secondary_station:
-        secondary_station = None
+    primary_station = os.getenv("PRIMARY_STATION", "KORD").strip().upper()
+    if not primary_station:
+        primary_station = "PRIMARY"
+
+    secondary_station_raw = os.getenv("SECONDARY_STATION", "KMDW").strip().upper()
+    secondary_station = secondary_station_raw if secondary_station_raw else None
+
+    primary_latitude = _parse_optional_float(os.getenv("PRIMARY_LATITUDE"), "PRIMARY_LATITUDE")
+    primary_longitude = _parse_optional_float(os.getenv("PRIMARY_LONGITUDE"), "PRIMARY_LONGITUDE")
+    primary_elevation_m = _parse_optional_float(os.getenv("PRIMARY_ELEVATION_M"), "PRIMARY_ELEVATION_M")
+
+    secondary_latitude = _parse_optional_float(os.getenv("SECONDARY_LATITUDE"), "SECONDARY_LATITUDE")
+    secondary_longitude = _parse_optional_float(os.getenv("SECONDARY_LONGITUDE"), "SECONDARY_LONGITUDE")
+    secondary_elevation_m = _parse_optional_float(os.getenv("SECONDARY_ELEVATION_M"), "SECONDARY_ELEVATION_M")
+
+    if secondary_station is None and any(
+        value is not None for value in (secondary_latitude, secondary_longitude, secondary_elevation_m)
+    ):
+        secondary_station = "SECONDARY"
+
+    primary_station_def = _resolve_station_definition(
+        station_id=primary_station,
+        latitude=primary_latitude,
+        longitude=primary_longitude,
+        elevation_m=primary_elevation_m,
+        env_prefix="PRIMARY",
+        required=True,
+    )
+    secondary_station_def = _resolve_station_definition(
+        station_id=secondary_station,
+        latitude=secondary_latitude,
+        longitude=secondary_longitude,
+        elevation_m=secondary_elevation_m,
+        env_prefix="SECONDARY",
+        required=False,
+    )
 
     return BotConfig(
         timezone=timezone,
-        primary_station=os.getenv("PRIMARY_STATION", "KORD").strip().upper(),
+        primary_station=primary_station,
         secondary_station=secondary_station,
         post_time_morning=post_time_morning,
         post_time_afternoon=post_time_afternoon,
@@ -105,4 +195,6 @@ def load_config(force_dry_run: bool | None = None) -> BotConfig:
         open_meteo_model=os.getenv("OPEN_METEO_MODEL", "").strip() or None,
         bsky_handle=bsky_handle,
         bsky_app_password=bsky_password,
+        primary_station_def=primary_station_def,
+        secondary_station_def=secondary_station_def,
     )

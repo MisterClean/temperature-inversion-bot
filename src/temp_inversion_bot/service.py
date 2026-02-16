@@ -117,7 +117,14 @@ class InversionBotService:
         return now_utc
 
     def _build_analysis(self, target_time_utc: datetime) -> CombinedAnalysis:
-        primary_station = STATIONS[self._config.primary_station]
+        primary_station = self._config.primary_station_def or STATIONS.get(self._config.primary_station)
+        if primary_station is None:
+            self._logger.error("Unknown primary station configuration: %s", self._config.primary_station)
+            return _uncertain_analysis(
+                primary_station=self._config.primary_station,
+                secondary_station=self._config.secondary_station,
+                reason="Configuration error: primary station is unknown.",
+            )
 
         try:
             primary_profile = self._source.fetch_station_profile(primary_station, target_time_utc)
@@ -132,12 +139,17 @@ class InversionBotService:
 
         secondary: StationAnalysis | None = None
         secondary_station = self._config.secondary_station
-        if secondary_station and secondary_station in STATIONS:
+        secondary_station_def = self._config.secondary_station_def or (
+            STATIONS.get(secondary_station) if secondary_station else None
+        )
+        if secondary_station and secondary_station_def is not None:
             try:
-                secondary_profile = self._source.fetch_station_profile(STATIONS[secondary_station], target_time_utc)
+                secondary_profile = self._source.fetch_station_profile(secondary_station_def, target_time_utc)
                 secondary = analyze_station_profile(secondary_profile)
             except DataFetchError as exc:
                 self._logger.warning("Secondary profile fetch failed for %s: %s", secondary_station, exc)
+        elif secondary_station and secondary_station_def is None:
+            self._logger.warning("Secondary station '%s' is unknown; skipping cross-check", secondary_station)
 
         return combine_station_analyses(primary, secondary, secondary_station)
 
