@@ -7,7 +7,7 @@ import httpx
 
 from temp_inversion_bot.data_sources.base import DataFetchError
 from temp_inversion_bot.domain import StationProfile, VerticalPoint
-from temp_inversion_bot.retry import retry_call
+from temp_inversion_bot.retry import RetryError, retry_call
 from temp_inversion_bot.stations import StationDefinition
 
 _PRESSURE_LEVELS = (1000, 975, 950, 925, 900, 850)
@@ -26,13 +26,13 @@ class OpenMeteoProfileSource:
         self,
         *,
         base_url: str,
-        model: str,
+        model: str | None,
         timeout_s: float = 15.0,
         attempts: int = 3,
         logger: logging.Logger | None = None,
     ) -> None:
         self._base_url = base_url
-        self._model = model
+        self._model = model.strip() if model else None
         self._timeout_s = timeout_s
         self._attempts = attempts
         self._logger = logger or logging.getLogger(__name__)
@@ -41,13 +41,16 @@ class OpenMeteoProfileSource:
         if target_time_utc.tzinfo is None:
             raise ValueError("target_time_utc must be timezone-aware")
 
-        payload = retry_call(
-            lambda: self._request_payload(station),
-            attempts=self._attempts,
-            exceptions=(httpx.HTTPError, DataFetchError),
-            logger=self._logger,
-            context=f"open-meteo fetch for {station.station_id}",
-        )
+        try:
+            payload = retry_call(
+                lambda: self._request_payload(station),
+                attempts=self._attempts,
+                exceptions=(httpx.HTTPError, DataFetchError),
+                logger=self._logger,
+                context=f"open-meteo fetch for {station.station_id}",
+            )
+        except RetryError as exc:
+            raise DataFetchError(f"Open-Meteo fetch failed for {station.station_id}") from exc
         return self._payload_to_profile(payload, station, target_time_utc)
 
     def _request_payload(self, station: StationDefinition) -> dict:
@@ -66,10 +69,11 @@ class OpenMeteoProfileSource:
             "hourly": ",".join(hourly_fields),
             "timezone": "UTC",
             "forecast_days": 2,
-            "models": self._model,
             "temperature_unit": "celsius",
             "wind_speed_unit": "kn",
         }
+        if self._model:
+            params["models"] = self._model
 
         response = httpx.get(self._base_url, params=params, timeout=self._timeout_s)
         response.raise_for_status()
@@ -114,18 +118,25 @@ class OpenMeteoProfileSource:
             raise DataFetchError(f"Not enough profile levels for {station.station_id}")
 
         has_low_level = any(point.z_agl_m <= 300.0 for point in points)
-        source = f"open-meteo:{self._model}"
+        source_model = self._source_model_label()
+        source = f"open-meteo:{source_model}"
         return StationProfile(
             station_id=station.station_id,
             timestamp_utc=ts_utc,
             points=points,
             source=source,
-            is_high_res=_is_high_res_model(self._model),
+            is_high_res=_is_high_res_model(source_model),
             from_pressure_levels=True,
             missing_low_level_values=not has_low_level,
             surface_wind_kt=_series_value(hourly, "wind_speed_10m", index),
             surface_wind_dir_deg=_series_value(hourly, "wind_direction_10m", index),
         )
+
+    def _source_model_label(self) -> str:
+        if self._model:
+            return self._model
+        endpoint = self._base_url.rstrip("/").split("/")[-1].strip()
+        return endpoint or "forecast"
 
 
 def _series_value(payload: dict, key: str, index: int) -> float | None:

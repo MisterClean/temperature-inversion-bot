@@ -10,6 +10,7 @@ from temp_inversion_bot.config import BotConfig
 from temp_inversion_bot.data_sources.base import DataFetchError, ProfileSource
 from temp_inversion_bot.domain import CombinedAnalysis, InversionStatus, InversionStrength, StationAnalysis
 from temp_inversion_bot.publishing.base import Publisher
+from temp_inversion_bot.retry import RetryError
 from temp_inversion_bot.state import JsonStateStore
 from temp_inversion_bot.stations import STATIONS
 
@@ -71,7 +72,17 @@ class InversionBotService:
                 return RunOutcome(slot=slot, posted=False, reason="afternoon_status_unchanged", analysis=analysis)
 
         post_text = compose_post(analysis)
-        post_uri = self._publisher.publish(post_text)
+        try:
+            post_uri = self._publisher.publish(post_text)
+        except RetryError as exc:
+            self._logger.error("Publish failed after retries: %s", exc)
+            return RunOutcome(
+                slot=slot,
+                posted=False,
+                reason="publish_failed",
+                post_text=post_text,
+                analysis=analysis,
+            )
 
         self._state_store.record_post(
             day=local_day,

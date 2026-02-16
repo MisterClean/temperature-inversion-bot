@@ -20,7 +20,7 @@ class BotConfig:
     afternoon_confidence_threshold: float
     state_file: Path
     open_meteo_url: str
-    open_meteo_model: str
+    open_meteo_model: str | None
     bsky_handle: str | None
     bsky_app_password: str | None
 
@@ -101,8 +101,8 @@ def load_config(force_dry_run: bool | None = None) -> BotConfig:
         max_posts_per_day=_parse_int(os.getenv("MAX_POSTS_PER_DAY"), default=2),
         afternoon_confidence_threshold=_parse_float(os.getenv("AFTERNOON_CONFIDENCE_THRESHOLD"), default=0.55),
         state_file=Path(os.getenv("STATE_FILE", "var/state.json")),
-        open_meteo_url=os.getenv("OPEN_METEO_URL", "https://api.open-meteo.com/v1/forecast"),
-        open_meteo_model=os.getenv("OPEN_METEO_MODEL", "hrrr_conus"),
+        open_meteo_url=os.getenv("OPEN_METEO_URL", "https://api.open-meteo.com/v1/gfs"),
+        open_meteo_model=os.getenv("OPEN_METEO_MODEL", "").strip() or None,
         bsky_handle=bsky_handle,
         bsky_app_password=bsky_password,
     )

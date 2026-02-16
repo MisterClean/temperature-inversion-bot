@@ -60,7 +60,13 @@ def _build_inversion_text(
 
 def _build_no_inversion_text(analysis: CombinedAnalysis, include_station_note: bool) -> str:
     header = "Chicagoland inversion ❌"
-    body = "No meaningful near-surface inversion in today’s profile. Mixing looks decent."
+    if analysis.max_delta_c is not None:
+        body = (
+            f"No meaningful near-surface inversion in today’s profile "
+            f"(max warming ~{analysis.max_delta_c:.1f}°C). Mixing looks decent."
+        )
+    else:
+        body = "No meaningful near-surface inversion in today’s profile. Mixing looks decent."
     if include_station_note and analysis.cross_station_note:
         body = f"{body} {analysis.cross_station_note}"
     return f"{header}\n{body}"

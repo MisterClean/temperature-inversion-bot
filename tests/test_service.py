@@ -5,6 +5,7 @@ from pathlib import Path
 
 from temp_inversion_bot.config import BotConfig
 from temp_inversion_bot.domain import StationProfile, VerticalPoint
+from temp_inversion_bot.retry import RetryError
 from temp_inversion_bot.service import InversionBotService
 from temp_inversion_bot.state import JsonStateStore
 from temp_inversion_bot.stations import STATIONS
@@ -59,6 +60,11 @@ class StubPublisher:
     def publish(self, text: str) -> str | None:
         self.posts.append(text)
         return "dry-run://test"
+
+
+class FailingPublisher:
+    def publish(self, text: str) -> str | None:
+        raise RetryError("publish failed")
 
 
 def _config(state_file: Path) -> BotConfig:
@@ -137,3 +143,18 @@ def test_state_store_counts_posts(tmp_path: Path) -> None:
     assert store.has_morning_post(datetime(2026, 2, 16, tzinfo=UTC).date()) is True
 
     assert "KORD" in STATIONS
+
+
+def test_publish_failure_does_not_write_state(tmp_path: Path) -> None:
+    state_file = tmp_path / "state.json"
+    service = InversionBotService(
+        config=_config(state_file),
+        source=StubSource(),
+        publisher=FailingPublisher(),
+        state_store=JsonStateStore(state_file),
+    )
+
+    outcome = service.run_slot("morning", now=datetime(2026, 2, 16, 13, 30, tzinfo=UTC))
+    assert outcome.posted is False
+    assert outcome.reason == "publish_failed"
+    assert JsonStateStore(state_file).post_count(datetime(2026, 2, 16, tzinfo=UTC).date()) == 0
