@@ -1,6 +1,6 @@
 # Temperature Inversion Bot (Python)
 
-A modular bot that posts daily Chicagoland temperature inversion updates to microblogging services.
+A modular bot that posts daily temperature inversion updates to microblogging services.
 
 First adapter included: **Bluesky** via Python `atproto` (`0.0.65+`).
 
@@ -14,10 +14,19 @@ First adapter included: **Bluesky** via Python `atproto` (`0.0.65+`).
 - Enforces max `2` posts/day.
 - Keeps posts under `280` chars with deterministic trimming rules.
 
+## Data source modes
+
+Set `PROFILE_SOURCE_MODE` to choose how profiles are fetched:
+
+- `actual` (default): observed Wyoming radiosonde data (`weather.uwyo.edu`)  
+  - default station: `74560` (Lincoln, IL)
+- `forecast`: Open-Meteo pressure-level forecast profiles (GFS by default)
+
 ## Architecture
 
 - `src/temp_inversion_bot/data_sources/`
-  - `open_meteo.py`: fetches vertical profile + wind fields for configurable locations.
+  - `wyoming.py`: fetches and parses observed sounding CSV profiles.
+  - `open_meteo.py`: fetches forecast profile + wind fields.
 - `src/temp_inversion_bot/analysis.py`
   - interpolation, smoothing, inversion detection, confidence scoring.
 - `src/temp_inversion_bot/composer.py`
@@ -57,13 +66,20 @@ Required values:
 
 Optional key settings:
 
+- `PROFILE_SOURCE_MODE` (`actual` or `forecast`, default `actual`)
 - `TZ` (default `America/Chicago`)
-- `PRIMARY_STATION` (default `KORD`, or custom label)
-- `SECONDARY_STATION` (default `KMDW`, empty to disable)
+- `PRIMARY_STATION`
+  - `actual` default: `74560` (Lincoln, IL)
+  - `forecast` default: `KORD`
+- `SECONDARY_STATION`
+  - `actual` default: empty (disabled)
+  - `forecast` default: `KMDW`
 - `PRIMARY_LATITUDE`, `PRIMARY_LONGITUDE`, `PRIMARY_ELEVATION_M` (optional override)
 - `SECONDARY_LATITUDE`, `SECONDARY_LONGITUDE`, `SECONDARY_ELEVATION_M` (optional override)
 - `POST_TIME_MORNING` (default `07:30`)
 - `POST_TIME_AFTERNOON` (default `15:30`)
+- `WYOMING_SOUNDING_URL` (default `https://weather.uwyo.edu/wsgi/sounding`)
+- `WYOMING_SOURCE` (default `BUFR`)
 - `OPEN_METEO_URL` (default `https://api.open-meteo.com/v1/gfs`)
 - `OPEN_METEO_MODEL` (optional; leave empty for GFS endpoint default)
 - `DRY_RUN` (`true`/`false`)
@@ -125,6 +141,7 @@ class MyServicePublisher:
 
 ## Notes on data source
 
-- Current implementation uses Open-Meteo GFS pressure-level temperatures/geopotential heights.
+- `actual` mode pulls observed soundings from Wyoming (`TEXT:CSV`) at 00Z/12Z cycles, with fallback to earlier cycles.
+- `forecast` mode uses Open-Meteo GFS pressure-level temperatures/geopotential heights.
 - Confidence is reduced when low-level data is sparse or pressure-level conversion is used.
-- Built-in station IDs include `KORD`, `KMDW`, and `KGYY`, and you can override either station with custom coordinates.
+- Built-in station IDs include `74560` (Lincoln, IL), `KORD`, `KMDW`, and `KGYY`.

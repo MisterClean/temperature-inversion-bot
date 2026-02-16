@@ -16,6 +16,7 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
     keys = [
         "BSKY_HANDLE",
         "BSKY_APP_PASSWORD",
+        "PROFILE_SOURCE_MODE",
         "TZ",
         "PRIMARY_STATION",
         "SECONDARY_STATION",
@@ -32,6 +33,8 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "STATE_FILE",
         "OPEN_METEO_URL",
         "OPEN_METEO_MODEL",
+        "WYOMING_SOUNDING_URL",
+        "WYOMING_SOURCE",
         "DRY_RUN",
     ]
     for key in keys:
@@ -55,8 +58,21 @@ def test_dry_run_allows_missing_credentials(monkeypatch: pytest.MonkeyPatch) -> 
     assert cfg.bsky_handle is None
 
 
+def test_defaults_to_actual_mode_and_lincoln_station(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("DRY_RUN", "true")
+
+    cfg = load_config()
+    assert cfg.profile_source_mode == "actual"
+    assert cfg.primary_station == "74560"
+    assert cfg.secondary_station is None
+    assert cfg.primary_station_def is not None
+    assert cfg.primary_station_def.station_id == "74560"
+
+
 def test_load_config_normalizes_inputs(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:  # noqa: ANN001
     _clear_env(monkeypatch)
+    monkeypatch.setenv("PROFILE_SOURCE_MODE", "forecast")
     monkeypatch.setenv("DRY_RUN", "false")
     monkeypatch.setenv("BSKY_HANDLE", "test.bsky.social")
     monkeypatch.setenv("BSKY_APP_PASSWORD", "abcd-efgh-ijkl-mnop")
@@ -87,6 +103,7 @@ def test_invalid_time_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_load_config_supports_custom_primary_coordinates(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_env(monkeypatch)
+    monkeypatch.setenv("PROFILE_SOURCE_MODE", "forecast")
     monkeypatch.setenv("DRY_RUN", "true")
     monkeypatch.setenv("PRIMARY_STATION", "home")
     monkeypatch.setenv("PRIMARY_LATITUDE", "42.123")
@@ -107,8 +124,22 @@ def test_load_config_supports_custom_primary_coordinates(monkeypatch: pytest.Mon
 
 def test_unknown_station_without_coordinates_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_env(monkeypatch)
+    monkeypatch.setenv("PROFILE_SOURCE_MODE", "forecast")
     monkeypatch.setenv("DRY_RUN", "true")
     monkeypatch.setenv("PRIMARY_STATION", "UNKNOWN")
 
     with pytest.raises(ConfigError):
         load_config()
+
+
+def test_unknown_station_without_coordinates_allowed_in_actual_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("PROFILE_SOURCE_MODE", "actual")
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setenv("PRIMARY_STATION", "72469")
+    monkeypatch.setenv("SECONDARY_STATION", "")
+
+    cfg = load_config()
+    assert cfg.primary_station == "72469"
+    assert cfg.primary_station_def is not None
+    assert cfg.primary_station_def.station_id == "72469"

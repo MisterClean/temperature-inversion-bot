@@ -9,10 +9,14 @@ from dotenv import load_dotenv
 
 from temp_inversion_bot.stations import STATIONS, StationDefinition
 
+_PROFILE_SOURCE_ACTUAL = "actual"
+_PROFILE_SOURCE_FORECAST = "forecast"
+
 
 @dataclass(frozen=True, slots=True)
 class BotConfig:
     timezone: str
+    profile_source_mode: str
     primary_station: str
     secondary_station: str | None
     post_time_morning: str
@@ -23,6 +27,8 @@ class BotConfig:
     state_file: Path
     open_meteo_url: str
     open_meteo_model: str | None
+    wyoming_url: str
+    wyoming_src: str
     bsky_handle: str | None
     bsky_app_password: str | None
     primary_station_def: StationDefinition | None = None
@@ -76,6 +82,13 @@ def _validate_hhmm(raw: str, field_name: str) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
+def _parse_profile_source_mode(raw: str | None) -> str:
+    mode = (raw or _PROFILE_SOURCE_ACTUAL).strip().lower()
+    if mode not in {_PROFILE_SOURCE_ACTUAL, _PROFILE_SOURCE_FORECAST}:
+        raise ConfigError("PROFILE_SOURCE_MODE must be 'actual' or 'forecast'")
+    return mode
+
+
 def _resolve_station_definition(
     *,
     station_id: str | None,
@@ -84,6 +97,7 @@ def _resolve_station_definition(
     elevation_m: float | None,
     env_prefix: str,
     required: bool,
+    allow_unknown_without_coordinates: bool,
 ) -> StationDefinition | None:
     has_any_coordinate_override = any(value is not None for value in (latitude, longitude, elevation_m))
 
@@ -108,6 +122,10 @@ def _resolve_station_definition(
     if station is not None:
         return station
 
+    if allow_unknown_without_coordinates:
+        # Sounding station IDs are broader than the local built-in catalog.
+        return StationDefinition(station_id=station_id, latitude=0.0, longitude=0.0, elevation_m=0.0)
+
     if required:
         raise ConfigError(
             f"Unknown {env_prefix}_STATION '{station_id}'. "
@@ -129,6 +147,8 @@ def load_config(force_dry_run: bool | None = None) -> BotConfig:
     except Exception as exc:  # pragma: no cover - defensive
         raise ConfigError(f"Invalid timezone: {timezone}") from exc
 
+    profile_source_mode = _parse_profile_source_mode(os.getenv("PROFILE_SOURCE_MODE"))
+
     post_time_morning = _validate_hhmm(os.getenv("POST_TIME_MORNING", "07:30"), "POST_TIME_MORNING")
     post_time_afternoon = _validate_hhmm(
         os.getenv("POST_TIME_AFTERNOON", "15:30"),
@@ -144,11 +164,14 @@ def load_config(force_dry_run: bool | None = None) -> BotConfig:
     if not dry_run and (not bsky_handle or not bsky_password):
         raise ConfigError("BSKY_HANDLE and BSKY_APP_PASSWORD are required when DRY_RUN=false")
 
-    primary_station = os.getenv("PRIMARY_STATION", "KORD").strip().upper()
-    if not primary_station:
-        primary_station = "PRIMARY"
+    default_primary_station = "74560" if profile_source_mode == _PROFILE_SOURCE_ACTUAL else "KORD"
+    default_secondary_station = "" if profile_source_mode == _PROFILE_SOURCE_ACTUAL else "KMDW"
 
-    secondary_station_raw = os.getenv("SECONDARY_STATION", "KMDW").strip().upper()
+    primary_station = os.getenv("PRIMARY_STATION", default_primary_station).strip().upper()
+    if not primary_station:
+        primary_station = default_primary_station
+
+    secondary_station_raw = os.getenv("SECONDARY_STATION", default_secondary_station).strip().upper()
     secondary_station = secondary_station_raw if secondary_station_raw else None
 
     primary_latitude = _parse_optional_float(os.getenv("PRIMARY_LATITUDE"), "PRIMARY_LATITUDE")
@@ -164,6 +187,8 @@ def load_config(force_dry_run: bool | None = None) -> BotConfig:
     ):
         secondary_station = "SECONDARY"
 
+    allow_unknown_station_ids = profile_source_mode == _PROFILE_SOURCE_ACTUAL
+
     primary_station_def = _resolve_station_definition(
         station_id=primary_station,
         latitude=primary_latitude,
@@ -171,6 +196,7 @@ def load_config(force_dry_run: bool | None = None) -> BotConfig:
         elevation_m=primary_elevation_m,
         env_prefix="PRIMARY",
         required=True,
+        allow_unknown_without_coordinates=allow_unknown_station_ids,
     )
     secondary_station_def = _resolve_station_definition(
         station_id=secondary_station,
@@ -179,10 +205,12 @@ def load_config(force_dry_run: bool | None = None) -> BotConfig:
         elevation_m=secondary_elevation_m,
         env_prefix="SECONDARY",
         required=False,
+        allow_unknown_without_coordinates=allow_unknown_station_ids,
     )
 
     return BotConfig(
         timezone=timezone,
+        profile_source_mode=profile_source_mode,
         primary_station=primary_station,
         secondary_station=secondary_station,
         post_time_morning=post_time_morning,
@@ -193,6 +221,8 @@ def load_config(force_dry_run: bool | None = None) -> BotConfig:
         state_file=Path(os.getenv("STATE_FILE", "var/state.json")),
         open_meteo_url=os.getenv("OPEN_METEO_URL", "https://api.open-meteo.com/v1/gfs"),
         open_meteo_model=os.getenv("OPEN_METEO_MODEL", "").strip() or None,
+        wyoming_url=os.getenv("WYOMING_SOUNDING_URL", "https://weather.uwyo.edu/wsgi/sounding"),
+        wyoming_src=os.getenv("WYOMING_SOURCE", "BUFR").strip() or "BUFR",
         bsky_handle=bsky_handle,
         bsky_app_password=bsky_password,
         primary_station_def=primary_station_def,

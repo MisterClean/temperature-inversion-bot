@@ -70,6 +70,7 @@ class FailingPublisher:
 def _config(state_file: Path) -> BotConfig:
     return BotConfig(
         timezone="America/Chicago",
+        profile_source_mode="forecast",
         primary_station="KORD",
         secondary_station="KMDW",
         post_time_morning="07:30",
@@ -80,6 +81,8 @@ def _config(state_file: Path) -> BotConfig:
         state_file=state_file,
         open_meteo_url="https://api.open-meteo.com/v1/forecast",
         open_meteo_model="hrrr_conus",
+        wyoming_url="https://weather.uwyo.edu/wsgi/sounding",
+        wyoming_src="BUFR",
         bsky_handle=None,
         bsky_app_password=None,
     )

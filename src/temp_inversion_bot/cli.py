@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from temp_inversion_bot.config import ConfigError, load_config
 from temp_inversion_bot.data_sources.open_meteo import OpenMeteoProfileSource
+from temp_inversion_bot.data_sources.wyoming import WyomingSoundingProfileSource
 from temp_inversion_bot.publishing.bluesky import BlueskyPublisher
 from temp_inversion_bot.publishing.dry_run import DryRunPublisher
 from temp_inversion_bot.scheduler import BotScheduler
@@ -23,7 +24,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="slot to run when using run-once",
     )
     parser.add_argument("--force", action="store_true", help="ignore state guards")
-    parser.add_argument("--dry-run", action="store_true", help="print post instead of publishing to Bluesky")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=None,
+        help="print post instead of publishing to Bluesky",
+    )
     parser.add_argument("--log-level", default="INFO", help="logging level")
     return parser
 
@@ -36,6 +42,27 @@ def _auto_slot(now: datetime, morning: str, afternoon: str) -> str:
     if hm < (afternoon_h, afternoon_m):
         return "morning"
     return "afternoon"
+
+
+def _build_profile_source(config, logger):  # noqa: ANN001
+    if config.profile_source_mode == "actual":
+        logger.info(
+            "Using Wyoming sounding source mode (station=%s src=%s)",
+            config.primary_station,
+            config.wyoming_src,
+        )
+        return WyomingSoundingProfileSource(
+            base_url=config.wyoming_url,
+            src=config.wyoming_src,
+            logger=logger,
+        )
+
+    logger.info("Using Open-Meteo forecast source mode (model=%s)", config.open_meteo_model or "default")
+    return OpenMeteoProfileSource(
+        base_url=config.open_meteo_url,
+        model=config.open_meteo_model,
+        logger=logger,
+    )
 
 
 def main() -> None:
@@ -54,11 +81,7 @@ def main() -> None:
         parser.error(str(exc))
         return
 
-    source = OpenMeteoProfileSource(
-        base_url=config.open_meteo_url,
-        model=config.open_meteo_model,
-        logger=logger,
-    )
+    source = _build_profile_source(config, logger)
     state_store = JsonStateStore(config.state_file)
 
     if config.dry_run:
