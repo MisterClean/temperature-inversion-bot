@@ -139,6 +139,18 @@ class MyServicePublisher:
 
 3. Wire selection in `cli.py` (or via env/config flag).
 
+## Contributing
+
+Please see `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
+
+## Security
+
+Please see `SECURITY.md` for responsible disclosure guidance.
+
+## License
+
+MIT. See `LICENSE`.
+
 ## Notes on data source
 
 - `actual` mode pulls observed soundings from Wyoming (`TEXT:CSV`) at 00Z/12Z cycles, with fallback to earlier cycles.
