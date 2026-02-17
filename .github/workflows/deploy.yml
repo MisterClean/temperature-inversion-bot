@@ -1,0 +1,31 @@
+name: Deploy to Lightsail
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          known_hosts: 'github.com'
+
+      - name: Deploy to Lightsail
+        env:
+          LIGHTSAIL_IP: ${{ secrets.LIGHTSAIL_IP }}
+        run: |
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ env.LIGHTSAIL_IP }} << 'EOF'
+            cd /home/ubuntu/bots/temperature-inversion-bot
+            git pull origin main
+            .venv/bin/pip install -e .
+            source ~/.nvm/nvm.sh
+            pm2 restart temperature-inversion-bot
+          EOF
