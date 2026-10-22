@@ -1,8 +1,7 @@
 name: Deploy to Lightsail
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -16,16 +15,21 @@ jobs:
         uses: shimataro/ssh-key-action@v2
         with:
           key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
-          known_hosts: 'github.com'
+          known_hosts: ${{ secrets.LIGHTSAIL_KNOWN_HOSTS }}
 
       - name: Deploy to Lightsail
         env:
           LIGHTSAIL_IP: ${{ secrets.LIGHTSAIL_IP }}
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@${{ env.LIGHTSAIL_IP }} << 'EOF'
+          ssh -o StrictHostKeyChecking=yes ubuntu@${{ env.LIGHTSAIL_IP }} << 'EOF'
             cd /home/ubuntu/bots/temperature-inversion-bot
             git pull origin main
-            .venv/bin/pip install -e .
-            source ~/.nvm/nvm.sh
-            pm2 restart temperature-inversion-bot
+            .venv/bin/pip install --require-hashes -r requirements.txt
+            .venv/bin/pip install --no-deps -e .
+            export PATH=/opt/node-v24/bin:$PATH
+            if pm2 jlist | python3 -c 'import json,sys; sys.exit(not any(p["name"] == "temperature-inversion-bot" and p["pm2_env"]["status"] == "online" for p in json.load(sys.stdin)))'; then
+              pm2 restart temperature-inversion-bot
+            else
+              echo 'Bot remains stopped.'
+            fi
           EOF
